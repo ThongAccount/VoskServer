@@ -1,4 +1,3 @@
-vosk
 flask
 flask-sock
-soundfile
+vosk
