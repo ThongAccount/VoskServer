@@ -7,7 +7,7 @@ app = Flask(__name__)
 sock = Sock(app)
 
 # Load Vosk model (đảm bảo thư mục 'model' chứa model Vosk)
-model = Model(lang="vn")
+model = Model("model")
 
 @sock.route('/ws')
 def recognize(ws):
