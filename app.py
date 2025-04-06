@@ -49,7 +49,12 @@ def recognize(ws):
 
         if recognizer.AcceptWaveform(data):
             result = recognizer.Result()
+            print("📤 Sending result:", result)
             ws.send(result)
+        else:
+            partial = recognizer.PartialResult()
+            print("📤 Sending partial:", partial)
+            ws.send(partial)
 
     final_result = recognizer.FinalResult()
     ws.send(final_result)
