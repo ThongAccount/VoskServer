@@ -14,13 +14,13 @@ model = Model(lang="vn")  # tải mô hình tiếng Việt
 
 @sock.route('/ws')
 def recognize(ws):
-    recognizer = KaldiRecognizer(model, 16000)
-    audio_data = b''
-
+    audio_data = b""
     while True:
         data = ws.receive()
         if data is None:
             break
+        if isinstance(data, str):
+            data = data.encode('latin1')  # hoặc 'utf-8' nếu frontend dùng utf-8
         audio_data += data
 
         if recognizer.AcceptWaveform(data):
