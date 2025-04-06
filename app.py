@@ -1,41 +1,35 @@
 from flask import Flask
 from flask_sock import Sock
-import json
-import wave
-import os
 from vosk import Model, KaldiRecognizer
-import soundfile as sf
-import io
+import json
 
 app = Flask(__name__)
 sock = Sock(app)
 
-model = Model(lang="vn")  # tải mô hình tiếng Việt
+# Load Vosk model (đảm bảo thư mục 'model' chứa model Vosk)
+model = Model("model")
 
 @sock.route('/ws')
 def recognize(ws):
-    audio_data = b""
+    recognizer = KaldiRecognizer(model, 16000)
+    
     while True:
         data = ws.receive()
         if data is None:
             break
+
+        # Đảm bảo data là bytes
         if isinstance(data, str):
-            data = data.encode('latin1')  # hoặc 'utf-8' nếu frontend dùng utf-8
-        audio_data += data
+            data = data.encode("latin1")  # Giải pháp an toàn cho WebSocket gửi string
 
+        # Gửi kết quả cuối cùng hoặc tạm thời
         if recognizer.AcceptWaveform(data):
-            result = recognizer.Result()
-            ws.send(result)
+            result = json.loads(recognizer.Result())
+            ws.send(json.dumps({"text": result.get("text", "")}))
         else:
-            partial = recognizer.PartialResult()
-            ws.send(partial)
-
-    final_result = recognizer.FinalResult()
-    ws.send(final_result)
+            partial = json.loads(recognizer.PartialResult())
+            ws.send(json.dumps({"partial": partial.get("partial", "")}))
 
 @app.route('/')
-def home():
-    return '✅ Vosk server is running!'
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+def index():
+    return "✅ Vosk WebSocket server is running!"
