@@ -1,4 +1,4 @@
-flask
 vosk
+Flask
 gunicorn
 ffmpeg-python
