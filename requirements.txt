@@ -1,3 +1,4 @@
 flask
 vosk
+gunicorn
 ffmpeg-python
