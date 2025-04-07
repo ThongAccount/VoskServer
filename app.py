@@ -1,9 +1,15 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, render_template, jsonify
 from vosk import Model, KaldiRecognizer
-import os, wave, json, subprocess, uuid
+import os
+import wave
+import json
+import subprocess
+import uuid
 
 app = Flask(__name__)
-model = Model("models/vn")  # Đặt mô hình ở đây
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB
+
+model = Model("models/vn")  # Đường dẫn model đã tải
 
 @app.route("/")
 def index():
@@ -11,45 +17,54 @@ def index():
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
-    if "audio_data" not in request.files:
-        return jsonify({"error": "Không có file audio"}), 400
-
-    audio_file = request.files["audio_data"]
-    original_path = f"temp/{uuid.uuid4().hex}_{audio_file.filename}"
-    converted_path = original_path + ".wav"
-
-    os.makedirs("temp", exist_ok=True)
-    audio_file.save(original_path)
-
-    # Chuyển đổi về WAV 16kHz mono PCM
     try:
-        subprocess.run([
-            "ffmpeg", "-i", original_path,
-            "-ar", "16000", "-ac", "1", "-f", "wav", converted_path
-        ], check=True)
-    except subprocess.CalledProcessError:
-        return jsonify({"error": "Chuyển đổi audio thất bại"}), 500
+        audio = request.files.get("audio_data")
+        if not audio or audio.filename == "":
+            return jsonify({"error": "Không có file audio"}), 400
 
-    # Nhận diện bằng Vosk
-    wf = wave.open(converted_path, "rb")
-    rec = KaldiRecognizer(model, wf.getframerate())
-    results = []
+        # Lưu file tạm
+        input_path = f"temp_input_{uuid.uuid4()}"
+        output_path = f"temp_output_{uuid.uuid4()}.wav"
+        audio.save(input_path)
 
-    while True:
-        data = wf.readframes(4000)
-        if len(data) == 0:
-            break
-        if rec.AcceptWaveform(data):
-            results.append(json.loads(rec.Result()))
-    results.append(json.loads(rec.FinalResult()))
+        # Chuyển đổi bằng ffmpeg: mono, 16-bit PCM, 16000Hz
+        convert = subprocess.run([
+            "ffmpeg", "-y", "-i", input_path,
+            "-ac", "1", "-ar", "16000", "-f", "wav", output_path
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    text = " ".join([r.get("text", "") for r in results])
+        if convert.returncode != 0 or not os.path.exists(output_path):
+            os.remove(input_path)
+            return jsonify({"error": "Lỗi khi chuyển đổi audio"}), 500
 
-    # Xóa file tạm
-    os.remove(original_path)
-    os.remove(converted_path)
+        wf = wave.open(output_path, "rb")
 
-    return jsonify({"text": text})
+        if wf.getnchannels() != 1 or wf.getsampwidth() != 2 or wf.getframerate() != 16000:
+            wf.close()
+            os.remove(input_path)
+            os.remove(output_path)
+            return jsonify({"error": "File không đúng định dạng WAV mono 16kHz"}), 400
+
+        rec = KaldiRecognizer(model, wf.getframerate())
+        results = []
+
+        while True:
+            data = wf.readframes(4000)
+            if len(data) == 0:
+                break
+            if rec.AcceptWaveform(data):
+                results.append(json.loads(rec.Result()))
+        results.append(json.loads(rec.FinalResult()))
+        text = " ".join([r.get("text", "") for r in results])
+
+        wf.close()
+        os.remove(input_path)
+        os.remove(output_path)
+
+        return jsonify({"text": text})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
