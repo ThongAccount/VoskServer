@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Nhận diện giọng nói</title>
+</head>
+<body>
+  <h2>🎤 Nhấn để ghi âm:</h2>
+  <button onclick="startRecording()">Bắt đầu</button>
+  <button onclick="stopRecording()">Dừng & Gửi</button>
+  <p>Kết quả: <span id="result">...</span></p>
+  <script src="/static/recorder.js"></script>
+  <h2>📁 Hoặc chọn file WAV:</h2>
+  <input type="file" id="fileInput" accept=".wav" />
+  <button onclick="uploadFile()">Gửi file</button>
+</body>
+</html>

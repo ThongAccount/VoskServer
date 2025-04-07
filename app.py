@@ -1,69 +1,64 @@
-# app.py
-import os
-import zipfile
-import urllib.request
-import logging
-from flask import Flask, request
-from flask_sock import Sock
+from flask import Flask, request, render_template, jsonify
 from vosk import Model, KaldiRecognizer
-
-MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-vn-0.4.zip"
-MODEL_ZIP = "model.zip"
-MODEL_DIR = "model"
-MODEL_SUBDIR = os.path.join(MODEL_DIR, "vosk-model-vn-0.4")
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from tempfile import NamedTemporaryFile
+import os, wave, json, subprocess
 
 app = Flask(__name__)
-sock = Sock(app)
 
-def download_model():
-    logger.info("📝 Đang tải mô hình từ URL...")
-    urllib.request.urlretrieve(MODEL_URL, MODEL_ZIP)
-    logger.info("✅ Tải mô hình thành công!")
+# Đường dẫn tới model Vosk
+MODEL_PATH = "models/vn"
+if not os.path.exists(MODEL_PATH):
+    raise Exception(f"Không tìm thấy model tại: {MODEL_PATH}")
 
-    with zipfile.ZipFile(MODEL_ZIP, "r") as zip_ref:
-        zip_ref.extractall(MODEL_DIR)
-    logger.info("✅ Giải nén mô hình thành công!")
+model = Model(MODEL_PATH)
 
-# Tải và load model
-if not os.path.exists(MODEL_SUBDIR):
-    download_model()
+@app.route("/")
+def index():
+    return render_template("index.html")
 
-try:
-    model = Model(MODEL_SUBDIR)
-    logger.info("✅ Mô hình đã sẵn sàng!")
-except Exception as e:
-    logger.error("❌ Lỗi khi tạo mô hình Vosk: %s", str(e))
+@app.route("/transcribe", methods=["POST"])
+def transcribe():
+    if "audio_data" not in request.files:
+        return jsonify({"error": "Không có file audio được gửi."}), 400
 
-# WebSocket handler
-@sock.route('/ws')
-def recognize(ws):
-    recognizer = KaldiRecognizer(model, 16000)
-    audio_data = b''
+    audio = request.files["audio_data"]
 
-    while True:
-        data = ws.receive()
-        if data is None:
-            break
-        if isinstance(data, str):
-            data = data.encode("latin1")
-        audio_data += data
+    try:
+        # Save input audio to temp
+        with NamedTemporaryFile(delete=False, suffix=".wav") as tmp_input:
+            audio.save(tmp_input.name)
 
-        if recognizer.AcceptWaveform(data):
-            result = recognizer.Result()
-            logger.info("📤 Sending result: %s", result)
-            ws.send(result)
-        else:
-            partial = recognizer.PartialResult()
-            logger.debug("📤 Sending partial: %s", partial)
-            ws.send(partial)
+            # Convert to PCM 16kHz mono WAV
+            with NamedTemporaryFile(delete=False, suffix=".wav") as tmp_output:
+                command = [
+                    "ffmpeg", "-y",
+                    "-i", tmp_input.name,
+                    "-ac", "1",
+                    "-ar", "16000",
+                    "-sample_fmt", "s16",
+                    tmp_output.name
+                ]
+                subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    final_result = recognizer.FinalResult()
-    logger.info("📤 Final result: %s", final_result)
-    ws.send(final_result)
+                wf = wave.open(tmp_output.name, "rb")
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(debug=True, host="0.0.0.0", port=port)
+        rec = KaldiRecognizer(model, wf.getframerate())
+        results = []
+
+        while True:
+            data = wf.readframes(4000)
+            if len(data) == 0:
+                break
+            if rec.AcceptWaveform(data):
+                results.append(json.loads(rec.Result()))
+        results.append(json.loads(rec.FinalResult()))
+        text = " ".join([r.get("text", "") for r in results])
+        return jsonify({"text": text})
+
+    except subprocess.CalledProcessError:
+        return jsonify({"error": "Lỗi khi convert audio với ffmpeg"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Lỗi xử lý audio: {str(e)}"}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True)
